@@ -1362,7 +1362,7 @@ Dht::Search::refill(const RoutingTable& r, time_point now) {
 
 /* Start a search. */
 Dht::Search*
-Dht::search(const InfoHash& id, sa_family_t af, GetCallback callback, DoneCallback done_callback, Value::Filter filter)
+Dht::search(const InfoHash& id, sa_family_t af, GetCallback callback, DoneCallback done_callback, Value::Filter filter, Query q)
 {
     if (!isRunning(af)) {
         DHT_ERROR("[search %s IPv%c] unsupported protocol", id.toString().c_str(), (af == AF_INET) ? '4' : '6');
@@ -1397,7 +1397,7 @@ Dht::search(const InfoHash& id, sa_family_t af, GetCallback callback, DoneCallba
     }
 
     if (callback)
-        sr->callbacks.push_back({.start=now, .filter=filter, .get_cb=callback, .done_cb=done_callback});
+        sr->callbacks.push_back({.start=now, .filter=filter, .get_cb=callback, .done_cb=done_callback, .query=q});
 
     bootstrapSearch(*sr);
     searchStep(*sr);
@@ -1416,7 +1416,7 @@ Dht::announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, 
     auto sri = std::find_if (searches.begin(), searches.end(), [id,af](const Search& s) {
         return s.id == id && s.af == af;
     });
-    Search* sr = (sri == searches.end()) ? search(id, af, nullptr, nullptr) : &(*sri);
+    Search* sr = (sri == searches.end()) ? search(id, af) : &(*sri);
     if (!sr) {
         if (callback)
             callback(false, {});
@@ -1470,7 +1470,7 @@ Dht::listenTo(const InfoHash& id, sa_family_t af, GetCallback cb, Value::Filter 
     auto sri = std::find_if (searches.begin(), searches.end(), [id,af](const Search& s) {
         return s.id == id && s.af == af;
     });
-    Search* sr = (sri == searches.end()) ? search(id, af, nullptr, nullptr) : &(*sri);
+    Search* sr = (sri == searches.end()) ? search(id, af) : &(*sri);
     if (!sr)
         throw DhtException("Can't create search");
     DHT_ERROR("[search %s IPv%c] listen", id.toString().c_str(), (af == AF_INET) ? '4' : '6');
@@ -1611,7 +1611,7 @@ struct OpStatus {
 };
 
 void
-Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filter filter)
+Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filter filter, Query q)
 {
     now = clock::now();
 
@@ -1661,13 +1661,13 @@ Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filt
         status4->done = true;
         status4->ok = ok;
         done_l(nodes);
-    });
+    }, filter, q);
     Dht::search(id, AF_INET6, cb, [=](bool ok, const std::vector<std::shared_ptr<Node>>& nodes) {
         //DHT_WARN("DHT done IPv6");
         status6->done = true;
         status6->ok = ok;
         done_l(nodes);
-    });
+    }, filter, q);
 }
 
 std::vector<std::shared_ptr<Value>>
@@ -1752,9 +1752,11 @@ Dht::storageChanged(Storage& st, ValueStorage& v)
     }
 
     for (const auto& l : st.listeners) {
+        if (l.filter and not l.filter(*v.data))
+            continue;
         DHT_WARN("Storage changed. Sending update to %s %s.", l.id.toString().c_str(), print_addr((sockaddr*)&l.ss, l.sslen).c_str());
-        std::vector<ValueStorage> vals;
-        vals.push_back(v);
+        std::vector<std::shared_ptr<Value>> vals;
+        vals.push_back(v.data);
         Blob ntoken = makeToken((const sockaddr*)&l.ss, false);
         sendClosestNodes((const sockaddr*)&l.ss, l.sslen, TransId {TransPrefix::GET_VALUES, l.tid}, st.id, WANT4 | WANT6, ntoken, vals);
     }
@@ -1818,7 +1820,7 @@ Dht::Storage::clear()
 }
 
 void
-Dht::storageAddListener(const InfoHash& id, const InfoHash& node, const sockaddr *from, socklen_t fromlen, uint16_t tid)
+Dht::storageAddListener(const InfoHash& id, const InfoHash& node, const sockaddr *from, socklen_t fromlen, uint16_t tid, const Query& q)
 {
     auto st = findStorage(id);
     if (st == store.end()) {
@@ -1832,8 +1834,9 @@ Dht::storageAddListener(const InfoHash& id, const InfoHash& node, const sockaddr
         return l.ss.ss_family == af && l.id == node;
     });
     if (l == st->listeners.end()) {
-        sendClosestNodes(from, fromlen, TransId {TransPrefix::GET_VALUES, tid}, st->id, WANT4 | WANT6, makeToken(from, false), st->getValues());
-        st->listeners.emplace_back(node, from, fromlen, tid, now);
+        auto filter = q.getFilter();
+        sendClosestNodes(from, fromlen, TransId {TransPrefix::GET_VALUES, tid}, st->id, WANT4 | WANT6, makeToken(from, false), st->get(filter));
+        st->listeners.emplace_back(node, from, fromlen, tid, now, std::move(filter));
     }
     else
         l->refresh(from, fromlen, tid, now);
@@ -2622,7 +2625,7 @@ Dht::processMessage(const uint8_t *buf, size_t buflen, const sockaddr *from, soc
             Blob ntoken = makeToken(from, false);
             if (st != store.end() && not st->empty()) {
                  DHT_DEBUG("[node %s %s] sending %u values.", msg.id.toString().c_str(), print_addr(from, fromlen).c_str(), st->valueCount());
-                 sendClosestNodes(from, fromlen, msg.tid, msg.info_hash, msg.want, ntoken, st->getValues());
+                 sendClosestNodes(from, fromlen, msg.tid, msg.info_hash, msg.want, ntoken, st->get(msg.query.getFilter()));
             } else {
                 DHT_DEBUG("[node %s %s] sending nodes.", msg.id.toString().c_str(), print_addr(from, fromlen).c_str());
                 sendClosestNodes(from, fromlen, msg.tid, msg.info_hash, msg.want, ntoken);
@@ -3057,7 +3060,7 @@ int
 Dht::sendNodesValues(const sockaddr *sa, socklen_t salen, TransId tid,
                  const uint8_t *nodes, unsigned nodes_len,
                  const uint8_t *nodes6, unsigned nodes6_len,
-                 const std::vector<ValueStorage>& st, const Blob& token)
+                 const std::vector<std::shared_ptr<Value>>& st, const Blob& token)
 {
     msgpack::sbuffer buffer;
     msgpack::packer<msgpack::sbuffer> pk(&buffer);
@@ -3094,7 +3097,7 @@ Dht::sendNodesValues(const sockaddr *sa, socklen_t salen, TransId tid,
         unsigned k = 0;
 
         do {
-            subset.emplace_back(packMsg(*st[j].data));
+            subset.emplace_back(packMsg(*st[j]));
             total_size += subset.back().size();
             k++;
             j = (j + 1) % st.size();
@@ -3171,7 +3174,7 @@ Dht::bufferClosestNodes(uint8_t* nodes, unsigned numnodes, const InfoHash& id, c
 
 int
 Dht::sendClosestNodes(const sockaddr *sa, socklen_t salen, TransId tid,
-                    const InfoHash& id, want_t want, const Blob& token, const std::vector<ValueStorage>& st)
+                    const InfoHash& id, want_t want, const Blob& token, const std::vector<std::shared_ptr<Value>>& st)
 {
     uint8_t nodes[8 * 26];
     uint8_t nodes6[8 * 38];
@@ -3332,35 +3335,40 @@ Dht::sendError(const sockaddr *sa, socklen_t salen, TransId tid, uint16_t code, 
     return send(buffer.data(), buffer.size(), 0, sa, salen);
 }
 
-msgpack::object*
-findMapValue(msgpack::object& map, const std::string& key) {
-    if (map.type != msgpack::type::MAP) throw msgpack::type_error();
-    for (unsigned i = 0; i < map.via.map.size; i++) {
-        auto& o = map.via.map.ptr[i];
-        if(o.key.type != msgpack::type::STR)
-            continue;
-        if (o.key.as<std::string>() == key) {
-            return &o.val;
-        }
-    }
-    return nullptr;
-}
-
 void
 Dht::ParsedMessage::msgpack_unpack(msgpack::object msg)
 {
     auto y = findMapValue(msg, "y");
-    auto a = findMapValue(msg, "a");
     auto r = findMapValue(msg, "r");
     auto e = findMapValue(msg, "e");
 
-    std::string query;
-    if (auto q = findMapValue(msg, "q")) {
-        if (q->type != msgpack::type::STR)
+    std::string q;
+    if (auto rq = findMapValue(msg, "q")) {
+        if (rq->type != msgpack::type::STR)
             throw msgpack::type_error();
-        query = q->as<std::string>();
+        q = rq->as<std::string>();
     }
 
+    if (e)
+        type = MessageType::Error;
+    else if (r)
+        type = MessageType::Reply;
+    else if (y and y->as<std::string>() != "q")
+        throw msgpack::type_error();
+    else if (q == "ping")
+        type = MessageType::Ping;
+    else if (q == "find")
+        type = MessageType::FindNode;
+    else if (q == "get")
+        type = MessageType::GetValues;
+    else if (q == "listen")
+        type = MessageType::Listen;
+    else if (q == "put")
+        type = MessageType::AnnounceValue;
+    else
+        throw msgpack::type_error();
+
+    auto a = findMapValue(msg, "a");
     if (!a && !r && !e)
         throw msgpack::type_error();
     auto& req = a ? *a : (r ? *r : *e);
@@ -3379,6 +3387,9 @@ Dht::ParsedMessage::msgpack_unpack(msgpack::object msg)
 
     if (auto rtarget = findMapValue(req, "target"))
         target = {*rtarget};
+
+    if (auto rquery = findMapValue(req, "q"))
+        query.msgpack_unpack(*rquery);
 
     if (auto otoken = findMapValue(req, "token"))
         token = unpackBlob(*otoken);
@@ -3452,24 +3463,6 @@ Dht::ParsedMessage::msgpack_unpack(msgpack::object msg)
     if (auto rv = findMapValue(msg, "v"))
         ua = rv->as<std::string>();
 
-    if (e)
-        type = MessageType::Error;
-    else if (r)
-        type = MessageType::Reply;
-    else if (y and y->as<std::string>() != "q")
-        throw msgpack::type_error();
-    else if (query == "ping")
-        type = MessageType::Ping;
-    else if (query == "find")
-        type = MessageType::FindNode;
-    else if (query == "get")
-        type = MessageType::GetValues;
-    else if (query == "listen")
-        type = MessageType::Listen;
-    else if (query == "put")
-        type = MessageType::AnnounceValue;
-    else
-        throw msgpack::type_error();
 }
 
 }

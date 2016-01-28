@@ -124,4 +124,6 @@ unpackMsg(Blob b) {
 
 msgpack::unpacked unpackMsg(Blob b);
 
+msgpack::object* findMapValue(msgpack::object& map, const std::string& key);
+
 }

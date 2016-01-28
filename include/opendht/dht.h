@@ -257,15 +257,15 @@ public:
                         cb and donecb won't be called again afterward.
      * @param f a filter function used to prefilter values.
      */
-    void get(const InfoHash& key, GetCallback cb, DoneCallback donecb=nullptr, Value::Filter f = Value::AllFilter());
-    void get(const InfoHash& key, GetCallback cb, DoneCallbackSimple donecb, Value::Filter f = Value::AllFilter()) {
-        get(key, cb, bindDoneCb(donecb), f);
+    void get(const InfoHash& key, GetCallback cb, DoneCallback donecb = {}, Value::Filter f = {}, Query q = {});
+    void get(const InfoHash& key, GetCallback cb, DoneCallbackSimple donecb, Value::Filter f = {}, Query q = {}) {
+        get(key, cb, bindDoneCb(donecb), f, q);
     }
-    void get(const InfoHash& key, GetCallbackSimple cb, DoneCallback donecb=nullptr, Value::Filter f = Value::AllFilter()) {
-        get(key, bindGetCb(cb), donecb, f);
+    void get(const InfoHash& key, GetCallbackSimple cb, DoneCallback donecb = {}, Value::Filter f = {}, Query q = {}) {
+        get(key, bindGetCb(cb), donecb, f, q);
     }
-    void get(const InfoHash& key, GetCallbackSimple cb, DoneCallbackSimple donecb, Value::Filter f = Value::AllFilter()) {
-        get(key, bindGetCb(cb), bindDoneCb(donecb), f);
+    void get(const InfoHash& key, GetCallbackSimple cb, DoneCallbackSimple donecb, Value::Filter f = {}, Query q = {}) {
+        get(key, bindGetCb(cb), bindDoneCb(donecb), f, q);
     }
 
     /**
@@ -279,14 +279,10 @@ public:
     std::shared_ptr<Value> getLocalById(const InfoHash& key, Value::Id vid) const;
 
     /**
-     * Announce a value on all available protocols (IPv4, IPv6), and
-     * automatically re-announce when it's about to expire.
+     * Announce a value on all available protocols (IPv4, IPv6).
+     * 
      * The operation will start as soon as the node is connected to the network.
      * The done callback will be called once, when the first announce succeeds, or fails.
-     *
-     * A "put" operation will never end by itself because the value will need to be
-     * reannounced on a regular basis.
-     * User can call #cancelPut(InfoHash, Value::Id) to cancel a put operation.
      */
     void put(const InfoHash& key, std::shared_ptr<Value>, DoneCallback cb=nullptr, time_point created=time_point::max());
     void put(const InfoHash& key, const std::shared_ptr<Value>& v, DoneCallbackSimple cb, time_point created=time_point::max()) {
@@ -588,6 +584,7 @@ private:
         Value::Filter filter;
         GetCallback get_cb;
         DoneCallback done_cb;
+        Query query;
     };
 
     /**
@@ -697,9 +694,11 @@ private:
         socklen_t sslen {};
         uint16_t tid {};
         time_point time {};
+        Value::Filter filter {};
 
         /*constexpr*/ Listener() : ss() {}
-        Listener(const InfoHash& id, const sockaddr *from, socklen_t fromlen, uint16_t ttid, time_point t) : id(id), ss(), sslen(fromlen), tid(ttid), time(t) {
+        Listener(const InfoHash& id, const sockaddr *from, socklen_t fromlen, uint16_t ttid, time_point t, Value::Filter f)
+         : id(id), ss(), sslen(fromlen), tid(ttid), time(t), filter(f) {
             memcpy(&ss, from, fromlen);
         }
         void refresh(const sockaddr *from, socklen_t fromlen, uint16_t ttid, time_point t) {
@@ -890,11 +889,11 @@ private:
     int sendNodesValues(const sockaddr*, socklen_t, TransId tid,
                               const uint8_t *nodes, unsigned nodes_len,
                               const uint8_t *nodes6, unsigned nodes6_len,
-                              const std::vector<ValueStorage>& st, const Blob& token);
+                              const std::vector<std::shared_ptr<Value>>& st, const Blob& token);
 
     int sendClosestNodes(const sockaddr*, socklen_t, TransId tid,
                                const InfoHash& id, want_t want, const Blob& token={},
-                               const std::vector<ValueStorage>& st = {});
+                               const std::vector<std::shared_ptr<Value>>& st = {});
 
 
     int sendListen(const sockaddr*, socklen_t, TransId,
@@ -924,6 +923,7 @@ private:
         Blob nodes4;
         Blob nodes6;
         std::vector<std::shared_ptr<Value>> values;
+        Query query;
         want_t want;
         uint16_t error_code;
         std::string ua;
@@ -950,7 +950,7 @@ private:
         });
     }
 
-    void storageAddListener(const InfoHash& id, const InfoHash& node, const sockaddr *from, socklen_t fromlen, uint16_t tid);
+    void storageAddListener(const InfoHash& id, const InfoHash& node, const sockaddr *from, socklen_t fromlen, uint16_t tid, const Query& q = {});
     bool storageStore(const InfoHash& id, const std::shared_ptr<Value>& value, time_point created);
     void expireStorage();
     void storageChanged(Storage& st, ValueStorage&);
@@ -1006,7 +1006,7 @@ private:
      * specified infohash (id), using the specified IP version (IPv4 or IPv6).
      * The values can be filtered by an arbitrary provided filter.
      */
-    Search* search(const InfoHash& id, sa_family_t af, GetCallback = nullptr, DoneCallback = nullptr, Value::Filter = Value::AllFilter());
+    Search* search(const InfoHash& id, sa_family_t af, GetCallback = {}, DoneCallback = {}, Value::Filter = {}, Query q = {});
     void announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, DoneCallback callback, time_point created=time_point::max());
     size_t listenTo(const InfoHash& id, sa_family_t af, GetCallback cb, Value::Filter f = Value::AllFilter());
 
