@@ -1,0 +1,10 @@
+FROM aberaud/opendht-deps-python
+MAINTAINER Adrien Béraud <adrien.beraud@savoirfairelinux.com>
+COPY . /root/opendht
+RUN cd /root/opendht && mkdir build && cd build \
+	&& cmake -DCMAKE_INSTALL_PREFIX=/usr -DOPENDHT_PYTHON=On -DOPENDHT_LTO=On .. \
+	&& make -j8 && make install \
+	&& cd .. && rm -rf build
+RUN cd /root/opendht && cd python/tools \
+	&& ./dht/virtual_network_builder.py -4 -6 -n 16 \
+	&& ./benchmark.py -v 16 -n 1024 --performance -t gets
