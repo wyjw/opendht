@@ -303,6 +303,35 @@ struct NodeExport {
     InfoHash id;
     sockaddr_storage ss;
     socklen_t sslen;
+
+    template <typename Packer>
+    void msgpack_pack(Packer& pk) const
+    {
+        pk.pack_map(2);
+        pk.pack(std::string("id"));
+        pk.pack(id);
+        pk.pack(std::string("addr"));
+        pk.pack_bin(sslen);
+        pk.pack_bin_body((char*)&ss, sslen);
+    }
+
+    void msgpack_unpack(msgpack::object o) {
+        if (o.type != msgpack::type::MAP)
+            throw msgpack::type_error();
+        if (o.via.map.size < 2)
+            throw msgpack::type_error();
+        if (o.via.map.ptr[0].key.as<std::string>() != "id")
+            throw msgpack::type_error();
+        if (o.via.map.ptr[1].key.as<std::string>() != "addr")
+            throw msgpack::type_error();
+        const auto& addr = o.via.map.ptr[1].val;
+        if (addr.type != msgpack::type::BIN)
+            throw msgpack::type_error();
+        if (addr.via.bin.size > sizeof(sockaddr_storage))
+            throw msgpack::type_error();
+        id.msgpack_unpack(o.via.map.ptr[0].val);
+        std::copy_n(addr.via.bin.ptr, addr.via.bin.size, (char*)&ss);
+    }
 };
 
 }
