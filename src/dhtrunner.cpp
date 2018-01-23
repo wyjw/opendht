@@ -228,6 +228,9 @@ DhtRunner::exportValues() const {
 void
 DhtRunner::setLoggers(LogMethod error, LogMethod warn, LogMethod debug) {
     std::lock_guard<std::mutex> lck(dht_mtx);
+    LOG_ERR = error;
+    LOG_WARN = warn;
+    LOG_DEBUG = debug;
     if (dht_)
         dht_->setLoggers(std::forward<LogMethod>(error), std::forward<LogMethod>(warn), std::forward<LogMethod>(debug));
 #if OPENDHT_PROXY_CLIENT
@@ -435,6 +438,7 @@ int bindSocket(const SockAddr& addr, SockAddr& bound)
 void
 DhtRunner::startNetwork(const SockAddr sin4, const SockAddr sin6)
 {
+    LOG_WARN("Runner: startNetwork %s %s", sin4.toString().c_str(), sin6.toString().c_str());
     running_network = false;
     if (rcv_thread.joinable())
         rcv_thread.join();
@@ -450,6 +454,8 @@ DhtRunner::startNetwork(const SockAddr sin4, const SockAddr sin6)
     if (sin6)
         s6 = bindSocket(sin6, bound6);
 #endif
+
+    LOG_WARN("Runner: startNetwork: got sockets %d %d", s4, s6);
 
     running_network = true;
     rcv_thread = std::thread([this]() {
@@ -732,6 +738,7 @@ DhtRunner::tryBootstrapContinuously()
                 for (auto it = nodes.rbegin(); it != nodes.rend(); it++) {
                     ++ping_count;
                     try {
+                        LOG_ERR("Runner: bootstrap: %s", it->first.c_str());
                         bootstrap(SockAddr::resolve(it->first, it->second), [&](bool) {
                             if (not running)
                                 return;
@@ -743,6 +750,7 @@ DhtRunner::tryBootstrapContinuously()
                         });
                     } catch (std::invalid_argument& e) {
                         --ping_count;
+                        LOG_ERR("Runner: error bootstraping: %s", e.what());
                         std::cerr << e.what() << std::endl;
                     }
                 }
@@ -872,6 +880,7 @@ DhtRunner::enableProxy(bool proxify)
     }
     if (proxify) {
         // Init the proxy client
+        LOG_WARN("Runner: creating proxy client");
         auto dht_via_proxy = std::unique_ptr<DhtInterface>(
             new DhtProxyClient([this]{
                 if (config_.threaded) {
@@ -894,6 +903,7 @@ DhtRunner::enableProxy(bool proxify)
         // and use it
         use_proxy = proxify;
     } else {
+        LOG_WARN("Runner: destroying proxy client");
         use_proxy = proxify;
         std::lock_guard<std::mutex> lck(storage_mtx);
         if (not listeners_.empty()) {

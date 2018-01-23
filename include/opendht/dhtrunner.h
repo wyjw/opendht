@@ -503,6 +503,10 @@ private:
     int s4 {-1}, s6 {-1};
     SockAddr bound4 {};
     SockAddr bound6 {};
+
+    LogMethod LOG_ERR = NOLOG;
+    LogMethod LOG_WARN = NOLOG;
+    LogMethod LOG_DEBUG = NOLOG;
 };
 
 }

@@ -209,7 +209,7 @@ DhtProxyServer::get(const std::shared_ptr<restbed::Session>& session) const
 void
 DhtProxyServer::listen(const std::shared_ptr<restbed::Session>& session) const
 {
-
+    std::cout << "ProxyServer: got listen" << std::endl;
     const auto request = session->get_request();
     int content_length = std::stoi(request->get_header("Content-Length", "0"));
     auto hash = request->get_path_parameter("hash");
@@ -262,6 +262,7 @@ DhtProxyServer::listen(const std::shared_ptr<restbed::Session>& session) const
 void
 DhtProxyServer::subscribe(const std::shared_ptr<restbed::Session>& session) const
 {
+    std::cout << "ProxyServer: got subscribe" << std::endl;
     const auto request = session->get_request();
     int content_length = std::stoi(request->get_header("Content-Length", "0"));
     auto hash = request->get_path_parameter("hash");
@@ -290,6 +291,8 @@ DhtProxyServer::subscribe(const std::shared_ptr<restbed::Session>& session) cons
                 auto platform = root["platform"].asString();
                 auto isAndroid = platform == "android";
                 auto clientId = root.isMember("client_id") ? root["client_id"].asString() : std::string();
+
+                std::cout << "ProxyServer: got subscribe from platform:" << platform << " clientId:" << clientId << "token:" << pushToken << std::endl;
 
                 auto token = 0;
                 {
@@ -383,6 +386,8 @@ DhtProxyServer::sendPushNotification(const std::string& token, const Json::Value
     restbed::Uri uri(HTTP_PROTO + pushServer_ + "/api/push");
     auto req = std::make_shared<restbed::Request>(uri);
     req->set_method("POST");
+
+    std::cout << "ProxyServer: sendPushNotification: token:" << token << "isAndroid:" << (int)isAndroid << std::endl;
 
     // NOTE: see https://github.com/appleboy/gorush
     Json::Value notification(Json::objectValue);
