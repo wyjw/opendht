@@ -252,6 +252,9 @@ DhtRunner::setLoggers(LogMethod error, LogMethod warn, LogMethod debug) {
     if (dht_via_proxy_)
         dht_via_proxy_->setLoggers(std::forward<LogMethod>(error), std::forward<LogMethod>(warn), std::forward<LogMethod>(debug));
 #endif
+    e = error;
+    w = warn;
+    d = debug;
 }
 
 void
@@ -864,11 +867,15 @@ DhtRunner::findCertificate(InfoHash hash, std::function<void(const std::shared_p
 void
 DhtRunner::resetDht()
 {
+    if (e) e("resetDht() enter");
     listeners_.clear();
 #if OPENDHT_PROXY_CLIENT
+    if (e) e("resetDht() pc");
     dht_via_proxy_.reset();
 #endif // OPENDHT_PROXY_CLIENT
+    if (e) e("resetDht() dht");
     dht_.reset();
+    if (e) e("resetDht() end");
 }
 
 SecureDht*

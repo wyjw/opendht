@@ -30,9 +30,13 @@ public:
     ValueCache(ValueCache&&) = default;
 
     ~ValueCache() {
+        std::cerr << "~ValueCache()" << std::endl;
+        //DHT_LOG.WARN("~ValueCache()");
         auto q = clear();
         for (auto& cb: q)
             cb();
+        std::cerr << "~ValueCache() end" << std::endl;
+        //DHT_LOG.WARN("~ValueCache() end");
     }
 
     CallbackQueue clear() {

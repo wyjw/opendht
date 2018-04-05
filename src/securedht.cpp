@@ -62,7 +62,13 @@ SecureDht::SecureDht(std::unique_ptr<DhtInterface> dht, SecureDht::Config conf)
 }
 
 SecureDht::~SecureDht()
-{}
+{
+    DHT_LOG.WARN("~SecureDht()");
+    dht_.reset();
+    nodesPubKeys_.clear();
+    nodesCertificates_.clear();
+    DHT_LOG.WARN("~SecureDht() end");
+}
 
 ValueType
 SecureDht::secureType(ValueType&& type)

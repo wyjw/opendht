@@ -493,6 +493,10 @@ private:
 
     /** Push notification token */
     std::string pushToken_;
+
+    LogMethod d {};
+    LogMethod w {};
+    LogMethod e {};
 };
 
 }

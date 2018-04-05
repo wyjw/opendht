@@ -94,9 +94,11 @@ DhtProxyClient::startProxy()
 
 DhtProxyClient::~DhtProxyClient()
 {
+    DHT_LOG.WARN("~DhtProxyClient()");
     isDestroying_ = true;
     cancelAllOperations();
     cancelAllListeners();
+    DHT_LOG.WARN("~DhtProxyClient() end");
 }
 
 std::vector<Sp<Value>>
@@ -606,6 +608,8 @@ DhtProxyClient::doListen(const InfoHash& key, ValueCallback cb, Value::Filter fi
     }
 
     auto token = ++listener_token_;
+    DHT_LOG.WARN("doListen %s %zu", key.to_c_str(), token);
+
     auto l = search->second.listeners.find(token);
     if (l == search->second.listeners.end()) {
         auto f = filter;
@@ -729,6 +733,7 @@ DhtProxyClient::doListen(const InfoHash& key, ValueCallback cb, Value::Filter fi
 bool
 DhtProxyClient::doCancelListen(const InfoHash& key, size_t ltoken)
 {
+    DHT_LOG.WARN("doCancelListen %s %zu", key.to_c_str(), ltoken);
     std::lock_guard<std::mutex> lock(searchLock_);
 
     auto search = searches_.find(key);
