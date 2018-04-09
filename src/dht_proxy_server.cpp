@@ -309,7 +309,7 @@ struct DhtProxyServer::Listener {
     Sp<Scheduler::Job> expireJob;
 };
 struct DhtProxyServer::PushListener {
-    std::map<InfoHash, std::vector<Listener>> listeners;
+    std::map<InfoHash, Listener> listeners;
     bool isAndroid;
 };
 
@@ -352,24 +352,26 @@ DhtProxyServer::subscribe(const std::shared_ptr<restbed::Session>& session)
                     // Check if listener is already present and refresh timeout if launched
 
                     auto pushListener = pushListeners_.emplace(pushToken, PushListener{}).first;
-                    auto listeners = pushListener->second.listeners.emplace(infoHash, std::vector<Listener>{}).first;
-                    for (auto& listener: listeners->second) {
-                        if (listener.token == tokenFromReq) {
-                            {
-                                std::lock_guard<std::mutex> l(schedulerLock_);
-                                scheduler_.edit(listener.expireJob, scheduler_.time() + OP_TIMEOUT);
-                            }
-                            s->close(restbed::OK, "{\"token\": " + std::to_string(listener.token) + "}\n");
-                            schedulerCv_.notify_one();
-                            return;
+                    auto list = pushListener->second.listeners.emplace(infoHash, Listener{});
+                    auto& listener = list.first->second;
+                    if (not list.second) {
+                        // Refresh existing listener
+                        listener.token = tokenFromReq;
+                        {
+                            std::lock_guard<std::mutex> l(schedulerLock_);
+                            scheduler_.edit(listener.expireJob, scheduler_.time() + OP_TIMEOUT);
                         }
+                        s->close(restbed::OK, "{\"token\": " + std::to_string(listener.token) + "}\n");
+                        schedulerCv_.notify_one();
+                        return;
                     }
+
+                    // New listener
                     pushListener->second.isAndroid = isAndroid;
 
                     // The listener is not found, so add it.
                     ++tokenPushNotif_;
                     token = tokenPushNotif_;
-                    Listener listener;
                     listener.token = token;
                     listener.internalToken = dht_->listen(infoHash,
                         [this, pushToken, token, isAndroid, clientId](std::vector<std::shared_ptr<Value>> /*value*/) {
@@ -393,7 +395,6 @@ DhtProxyServer::subscribe(const std::shared_ptr<restbed::Session>& session)
                             sendPushNotification(pushToken, json, isAndroid);
                         }
                     );
-                    listeners->second.emplace_back(std::move(listener));
                 }
                 s->close(restbed::OK, "{\"token\": " + std::to_string(token) + "}\n");
             } catch (...) {
@@ -452,16 +453,11 @@ DhtProxyServer::cancelPushListen(const std::string& pushToken, const dht::InfoHa
     auto listeners = pushListener->second.listeners.find(key);
     if (listeners == pushListener->second.listeners.end())
         return;
-    for (auto listener = listeners->second.begin(); listener != listeners->second.end();) {
-        if (listener->token == token) {
-            if (dht_)
-                dht_->cancelListen(key, std::move(listener->internalToken));
-            listener = listeners->second.erase(listener);
-        } else {
-            ++listener;
-        }
-    }
-    if (listeners->second.empty()) {
+
+    auto& listener = listeners->second;
+    if (listener.token == token) {
+        if (dht_)
+            dht_->cancelListen(key, std::move(listener.internalToken));
         pushListener->second.listeners.erase(listeners);
     }
     if (pushListener->second.listeners.empty()) {
